@@ -1,0 +1,6 @@
+{
+  "name": "Nautical Calamity: 3D Ship Sinking Survival",
+  "description": "Multiplayer-style 3D maritime survival game where players vote in a lobby on historic and modern ships like RMS Titanic, Lusitania, and Atlantic, then fight to survive dynamic sinkings, collisions, splits, and icy ocean waters.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
