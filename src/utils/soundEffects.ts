@@ -468,6 +468,69 @@ class SoundEngine {
     }
   }
 
+  // Door open / room transition sound (latch & creak)
+  public playDoor() {
+    if (this.isMuted) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const t = this.ctx.currentTime;
+    // Latch click
+    const clickOsc = this.ctx.createOscillator();
+    clickOsc.type = 'square';
+    clickOsc.frequency.setValueAtTime(380, t);
+    clickOsc.frequency.exponentialRampToValueAtTime(80, t + 0.05);
+
+    const clickGain = this.ctx.createGain();
+    clickGain.gain.setValueAtTime(0.25, t);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+
+    clickOsc.connect(clickGain);
+    clickGain.connect(this.ctx.destination);
+    clickOsc.start(t);
+    clickOsc.stop(t + 0.07);
+
+    // Door swing / creak
+    const creakOsc = this.ctx.createOscillator();
+    creakOsc.type = 'sawtooth';
+    creakOsc.frequency.setValueAtTime(140, t + 0.04);
+    creakOsc.frequency.linearRampToValueAtTime(260, t + 0.22);
+    creakOsc.frequency.exponentialRampToValueAtTime(90, t + 0.45);
+
+    const creakGain = this.ctx.createGain();
+    creakGain.gain.setValueAtTime(0.12, t + 0.04);
+    creakGain.gain.exponentialRampToValueAtTime(0.001, t + 0.46);
+
+    creakOsc.connect(creakGain);
+    creakGain.connect(this.ctx.destination);
+    creakOsc.start(t + 0.04);
+    creakOsc.stop(t + 0.47);
+  }
+
+  // Heartbeat sound during critical hypothermia or injury
+  public playHeartbeat() {
+    if (this.isMuted) return;
+    this.initCtx();
+    if (!this.ctx) return;
+
+    const t = this.ctx.currentTime;
+    [0, 0.14].forEach((delay) => {
+      const osc = this.ctx!.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(75, t + delay);
+      osc.frequency.exponentialRampToValueAtTime(32, t + delay + 0.12);
+
+      const gain = this.ctx!.createGain();
+      gain.gain.setValueAtTime(0.35, t + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + delay + 0.15);
+
+      osc.connect(gain);
+      gain.connect(this.ctx!.destination);
+      osc.start(t + delay);
+      osc.stop(t + delay + 0.16);
+    });
+  }
+
   // Victory fanfare / rescue arrived
   public playRescueArrived() {
     if (this.isMuted) return;

@@ -19,6 +19,9 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   onReturnToLobby,
   onOpenUpgrades,
 }) => {
+  const [countdown, setCountdown] = React.useState<number>(5);
+  const [isPaused, setIsPaused] = React.useState<boolean>(false);
+
   useEffect(() => {
     if (survived) {
       try {
@@ -32,6 +35,23 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
       }
     }
   }, [survived]);
+
+  // Automated round restart: Teleport everyone back to the lobby
+  useEffect(() => {
+    if (isPaused) return;
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onReturnToLobby();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isPaused, onReturnToLobby]);
 
   // Compute Badges
   const badges: string[] = [];
@@ -134,12 +154,37 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
           </div>
         )}
 
+        {/* Auto-Restart Banner */}
+        <div className="bg-slate-950/80 border border-sky-500/30 rounded-xl p-3 space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-sky-300 flex items-center gap-1.5">
+              <RotateCcw className={`w-3.5 h-3.5 text-sky-400 ${!isPaused ? 'animate-spin' : ''}`} />
+              Restarting Round
+            </span>
+            <span className="font-mono-tabular font-bold text-amber-300">
+              {isPaused ? 'Paused for Shop' : `Returning in ${countdown}s`}
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-400 text-left">
+            Ship has completed sinking. Teleporting everyone back to the Departure Lobby for next ship vote.
+          </p>
+          {!isPaused && (
+            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+              <div
+                className="h-full bg-sky-500 transition-all duration-1000 ease-linear"
+                style={{ width: `${(countdown / 5) * 100}%` }}
+              />
+            </div>
+          )}
+        </div>
+
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row items-center gap-2.5">
           {onOpenUpgrades && (
             <button
               onClick={() => {
                 sound.playClick();
+                setIsPaused(true);
                 onOpenUpgrades();
               }}
               className="w-full sm:w-1/2 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-950/60 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
@@ -157,7 +202,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
             className="w-full sm:flex-1 py-2.5 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white font-semibold text-xs rounded-xl shadow-lg shadow-sky-950 transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
             <RotateCcw className="w-4 h-4" />
-            Return to Terminal
+            Return to Terminal Now ({countdown}s)
           </button>
         </div>
       </div>

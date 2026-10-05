@@ -62,12 +62,12 @@ export const SurvivalHUD: React.FC<SurvivalHUDProps> = ({
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-3 md:p-5 z-20">
       {/* Cold Vignette / Blood Screen Overlay when in danger */}
-      {(isHypothermic || stats.isSubmerged) && (
+      {(isHypothermic || stats.isSubmerged || stats.bodyTemp < 45) && (
         <div className="absolute inset-0 vignette-cold pointer-events-none animate-pulse flex items-start justify-center pt-24">
-          {stats.isSubmerged && (
-            <div className="px-4 py-2 bg-sky-950/90 border border-cyan-400 text-cyan-100 rounded-xl shadow-2xl backdrop-blur-md text-xs font-bold flex items-center gap-2 animate-bounce">
-              <ThermometerSnowflake className="w-4 h-4 text-cyan-300 animate-spin" />
-              <span>FREEZING SEA WATER (28°F)! CLIMB OUT ONTO DECK, RAFT, OR LIFEBOAT!</span>
+          {stats.bodyTemp < 45 && (
+            <div className="px-4 py-2 bg-sky-950/95 border-2 border-cyan-400 text-cyan-100 rounded-xl shadow-2xl backdrop-blur-md text-xs font-bold flex items-center gap-2 animate-bounce">
+              <ThermometerSnowflake className="w-5 h-5 text-cyan-300 animate-spin" />
+              <span>SUPER COLD ({Math.round(stats.fahrenheitTemp || 32)}°F)! LOSING HEALTH FROM HYPOTHERMIA!</span>
             </div>
           )}
         </div>
@@ -133,9 +133,9 @@ export const SurvivalHUD: React.FC<SurvivalHUDProps> = ({
           {/* Body Temperature / Hypothermia Bar (Fahrenheit & Percent) */}
           <div>
             <div className="flex justify-between text-[11px] mb-1 font-mono-tabular">
-              <span className={`flex items-center gap-1 font-medium ${stats.isSubmerged ? 'text-cyan-300 animate-pulse font-bold' : 'text-sky-400'}`}>
-                <ThermometerSnowflake className={`w-3.5 h-3.5 ${stats.isSubmerged ? 'animate-spin' : ''}`} />
-                <span>{stats.isSubmerged ? 'Freezing (28°F Water)' : 'Body Temperature'}</span>
+              <span className={`flex items-center gap-1 font-medium ${stats.bodyTemp < 45 ? 'text-rose-400 font-bold animate-pulse' : stats.isSubmerged ? 'text-cyan-300 animate-pulse font-bold' : 'text-sky-400'}`}>
+                <ThermometerSnowflake className={`w-3.5 h-3.5 ${stats.bodyTemp < 45 ? 'animate-spin text-rose-400' : ''}`} />
+                <span>{stats.bodyTemp < 45 ? 'SUPER COLD (-HP)' : stats.isSubmerged ? 'Freezing (28°F Water)' : 'Body Temperature'}</span>
               </span>
               <span className={`font-semibold ${isHypothermic || stats.isSubmerged ? 'text-cyan-300 font-bold animate-pulse' : 'text-slate-300'}`}>
                 {(stats.fahrenheitTemp || 98.6).toFixed(1)}°F ({Math.round(stats.bodyTemp)}%)

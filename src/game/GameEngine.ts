@@ -634,27 +634,46 @@ export class GameEngine {
     if (this.playerStats.inLifeboat) {
       this.playerStats.inLifeboat = false;
       this.playerStats.currentLifeboatId = null;
-      this.playerPos.y += 1.5;
+      this.playerPos.x += 1.8;
+      this.playerPos.y += 0.8;
       sound.playSplash();
+      this.callbacks.onChatMessage({
+        id: String(Date.now()),
+        sender: 'Survivor',
+        text: 'Disembarked from lifeboat!',
+        timestamp: 'NOW',
+      });
       this.callbacks.onStatsUpdate(this.playerStats);
       return;
     }
 
-    // Check Lifeboats
+    // Check Lifeboats (Bow lifeboats & Promenade lifeboats)
     for (const boat of this.shipData.lifeboats) {
       const boatWorldPos = boat.group.getWorldPosition(new THREE.Vector3());
       const dist = this.playerPos.distanceTo(boatWorldPos);
-      if (dist < 4.5) {
+      if (dist < 5.0) {
         sound.playSplash();
+
+        // Detach from ship into world scene coordinates so it drives and steers independently
+        if (boat.group.parent !== this.scene) {
+          const worldPos = boat.group.getWorldPosition(new THREE.Vector3());
+          const worldQuat = boat.group.getWorldQuaternion(new THREE.Quaternion());
+          this.scene.attach(boat.group);
+          boat.group.position.copy(worldPos);
+          boat.group.quaternion.copy(worldQuat);
+        }
+
         boat.isDeployed = true;
+        boat.isOccupied = true;
         this.playerStats.inLifeboat = true;
         this.playerStats.currentLifeboatId = boat.id;
         this.playerStats.score += 250;
         this.callbacks.onStatsUpdate(this.playerStats);
+        const boatDisplayName = boat.id.includes('bow') ? 'Bow Lifeboat' : `Lifeboat ${boat.id.replace('boat_', '')}`;
         this.callbacks.onChatMessage({
           id: String(Date.now()),
           sender: 'Survivor',
-          text: `Boarded lifeboat ${boat.id}! Holding fast!`,
+          text: `Boarded rideable ${boatDisplayName}! Steer with joystick/WASD!`,
           timestamp: 'NOW',
         });
         return;
@@ -695,6 +714,38 @@ export class GameEngine {
         }
         this.callbacks.onStatsUpdate(this.playerStats);
         return;
+      }
+    }
+
+    // Check Interactive Doors (Bow, Stern, Rooftop, Promenade)
+    if (this.shipData.doors) {
+      for (const door of this.shipData.doors) {
+        const doorWorldPos = door.group.getWorldPosition(new THREE.Vector3());
+        const dist = this.playerPos.distanceTo(doorWorldPos);
+        if (dist < 4.2) {
+          sound.playDoor();
+
+          const targetParent = door.targetGroup === 'stern' ? this.shipData.sternGroup : this.shipData.bowGroup;
+          const worldTargetPos = targetParent.localToWorld(door.targetLocalPos.clone());
+
+          this.playerPos.copy(worldTargetPos);
+          this.playerVel.set(0, 0, 0);
+
+          // Clear active grab when going through a door
+          this.playerStats.isGrabbing = false;
+          this.isGrabPressed = false;
+          this.grabAnchorLocalPos = null;
+          this.grabAnchorGroup = null;
+
+          this.callbacks.onChatMessage({
+            id: String(Date.now()),
+            sender: 'Ship Access',
+            text: `Traversed through ${door.name}! Now at the ${door.targetDestination.toUpperCase()}.`,
+            timestamp: 'NOW',
+          });
+          this.callbacks.onStatsUpdate(this.playerStats);
+          return;
+        }
       }
     }
   }
@@ -954,21 +1005,18 @@ export class GameEngine {
       this.callbacks.onGameOver(true, this.playerStats, this.activeShipDef.name);
     }
 
-    // If ship completely submerged (progress = 1.0)
-    if (this.disasterProgress >= 0.99) {
-      if (this.playerStats.inLifeboat && this.playerStats.isAlive) {
+    // If ship completely submerged (progress >= 0.99)
+    if (this.disasterProgress >= 0.99 && this.phase === 'sinking') {
+      const survived = (this.playerStats.inLifeboat || (this.playerStats.hasLifejacket && this.playerStats.health > 20)) && this.playerStats.isAlive;
+      if (survived) {
         sound.playRescueArrived();
         this.addTokens(150);
-        this.phase = 'gameover';
-        this.callbacks.onGameOver(true, this.playerStats, this.activeShipDef.name);
-      } else if (!this.playerStats.hasLifejacket && this.playerPos.y <= 0) {
-        // Sucked down in vortex
-        this.playerStats.health = 0;
+      } else {
         this.playerStats.isAlive = false;
         this.addTokens(Math.round(this.playerStats.timeSurvived * 0.5));
-        this.phase = 'gameover';
-        this.callbacks.onGameOver(false, this.playerStats, this.activeShipDef.name);
       }
+      this.phase = 'gameover';
+      this.callbacks.onGameOver(survived, this.playerStats, this.activeShipDef.name);
     }
   }
 
@@ -979,17 +1027,62 @@ export class GameEngine {
     this.playerStats.timeSurvived += dt;
     this.playerStats.peakElevation = Math.max(this.playerStats.peakElevation, this.playerPos.y);
 
-    // If currently inside a lifeboat
+    // If currently inside a lifeboat: RIDEABLE LIFEBOATS!
     if (this.playerStats.inLifeboat && this.shipData) {
       const boat = this.shipData.lifeboats.find((b) => b.id === this.playerStats.currentLifeboatId);
       if (boat) {
-        const boatWorld = boat.group.getWorldPosition(new THREE.Vector3());
-        this.playerPos.copy(boatWorld).add(new THREE.Vector3(0, 0.4, 0));
-        this.playerMesh.position.copy(this.playerPos);
-        this.playerMesh.rotation.y = this.playerRotY + Math.PI;
+        // Ensure the lifeboat is detached from the ship and in world scene space so it drives independently
+        if (boat.group.parent !== this.scene) {
+          const worldPos = boat.group.getWorldPosition(new THREE.Vector3());
+          const worldQuat = boat.group.getWorldQuaternion(new THREE.Quaternion());
+          this.scene.attach(boat.group);
+          boat.group.position.copy(worldPos);
+          boat.group.quaternion.copy(worldQuat);
+          boat.isDeployed = true;
+          boat.isOccupied = true;
+        }
 
-        // Lifeboat provides safety from cold
-        this.playerStats.bodyTemp = Math.min(100, this.playerStats.bodyTemp + 2 * dt);
+        // Steer & Drive input from analog tablet thumbstick or WASD keyboard
+        let inputFwd = 0;
+        let inputTurn = 0;
+        if (this.keys['KeyW']) inputFwd += 1;
+        if (this.keys['KeyS']) inputFwd -= 0.6;
+        if (this.keys['KeyA']) inputTurn += 1;
+        if (this.keys['KeyD']) inputTurn -= 1;
+
+        if (this.thumbstickVector.lengthSq() > 0.01) {
+          inputTurn -= this.thumbstickVector.x;
+          inputFwd += this.thumbstickVector.y;
+        }
+
+        // Turn lifeboat
+        boat.group.rotation.y += inputTurn * 2.2 * dt;
+
+        // Drive lifeboat forward / backward along its heading
+        const fwdHeading = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), boat.group.rotation.y);
+        const boatSpeed = 9.5; // knots/speed
+        boat.group.position.addScaledVector(fwdHeading, inputFwd * boatSpeed * dt);
+
+        // Ocean wave bobbing & buoyancy for the lifeboat
+        const boatWaterY = Math.sin(boat.group.position.x * 0.05 + time * 1.8) * 0.8;
+        boat.group.position.y = boatWaterY + 0.35;
+        boat.group.rotation.x = Math.sin(time * 2.2 + boat.group.position.z * 0.1) * 0.10;
+        boat.group.rotation.z = Math.cos(time * 1.8 + boat.group.position.x * 0.1) * 0.07;
+
+        // Seat the player inside the lifeboat
+        this.playerPos.copy(boat.group.position).add(new THREE.Vector3(0, 0.45, 0));
+        this.playerMesh.position.copy(this.playerPos);
+        this.playerMesh.rotation.y = boat.group.rotation.y + Math.PI;
+
+        this.isSwimming = false;
+        this.isGrounded = true;
+        this.playerVel.set(0, 0, 0);
+
+        // Lifeboat provides warmth and safety from cold
+        this.playerStats.bodyTemp = Math.min(100, this.playerStats.bodyTemp + 3.5 * dt);
+        this.playerStats.fahrenheitTemp = 28 + (this.playerStats.bodyTemp / 100) * (98.6 - 28);
+
+        this.callbacks.onPromptInteract('Riding Lifeboat: Steer with Joystick / WASD · Press [E] to Disembark');
         this.callbacks.onStatsUpdate(this.playerStats);
         return;
       }
@@ -1195,9 +1288,22 @@ export class GameEngine {
       }
     }
 
-    // Health damage from hypothermia or drowning
-    if (this.playerStats.bodyTemp <= 0) {
-      this.playerStats.health = Math.max(0, this.playerStats.health - 6 * dt);
+    // Health damage from hypothermia / super cold / freezing water:
+    // When super cold (bodyTemp < 45% / fahrenheitTemp < 60°F), start losing health progressively!
+    if (this.playerStats.bodyTemp < 45) {
+      const coldSeverity = (45 - this.playerStats.bodyTemp) / 45; // 0 to 1
+      const hypothermiaDmg = (2.5 + coldSeverity * 12.0) * dt;
+      this.playerStats.health = Math.max(0, this.playerStats.health - hypothermiaDmg);
+
+      // Thumping heartbeat audio cue during critical hypothermia
+      if (this.playerStats.bodyTemp < 25 && Math.random() < 0.04) {
+        sound.playHeartbeat();
+      }
+    }
+
+    // Immediate cold bite if swimming in 28°F sea with dropping temperature
+    if (this.isSwimming && this.playerStats.bodyTemp < 65) {
+      this.playerStats.health = Math.max(0, this.playerStats.health - 2.0 * dt);
     }
 
     if (this.playerStats.health <= 0 && this.playerStats.isAlive) {
@@ -1233,6 +1339,7 @@ export class GameEngine {
     const lengthScale = this.activeShipDef.lengthMeters / 250;
     const halfBeam = (24 * lengthScale) * 0.5;
     const halfLength = (160 * lengthScale) * 0.5;
+    const shipLength = halfLength * 2;
 
     // Check if player is within ship's footprint
     const insideX = Math.abs(localPos.x) <= halfBeam + 0.9;
@@ -1305,20 +1412,100 @@ export class GameEngine {
       }
     }
 
-    // Stepped deck heights in local coordinates
-    let localDeckY = 18.5; // Standard boat / promenade deck
+    // 1. Identify which deck level the player is on (Rooftop, Forecastle Bow, Poop Deck Stern, or Promenade)
+    let localDeckY = 18.5; // Standard promenade deck
+    const isRooftopZone = localPos.y >= 21.5 && Math.abs(localPos.x) <= 8.8 && localPos.z >= shipLength * 0.06 && localPos.z <= shipLength * 0.32;
+    const isBowZone = localPos.z >= halfLength * 0.22;
+    const isSternZone = localPos.z <= -halfLength * 0.22;
 
-    // Raised Poop Deck (Stern)
-    if (localPos.z < -halfLength * 0.45) {
-      localDeckY = 22.0;
-    }
-    // Raised Forecastle (Bow)
-    else if (localPos.z > halfLength * 0.45) {
-      localDeckY = 19.8;
-    }
-    // Raised Bridge Roof (if player jumped up)
-    else if (localPos.y > 23.5 && Math.abs(localPos.x) < 7.5 && Math.abs(localPos.z) < 25) {
+    if (isRooftopZone) {
+      // ROOFTOP / BRIDGE OBSERVATION DECK
       localDeckY = 26.5;
+
+      // Rooftop Perimeter Guard Railings: keep player safely on the roof!
+      const maxRoofX = 8.2;
+      if (Math.abs(localPos.x) > maxRoofX && !this.isSwimming) {
+        localPos.x = Math.sign(localPos.x) * maxRoofX;
+        const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+        playerPos.x = resolvedWorld.x;
+        playerPos.z = resolvedWorld.z;
+      }
+      if (localPos.z > shipLength * 0.31) {
+        localPos.z = shipLength * 0.31;
+        const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+        playerPos.z = resolvedWorld.z;
+      }
+      if (localPos.z < shipLength * 0.08) {
+        localPos.z = shipLength * 0.08;
+        const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+        playerPos.z = resolvedWorld.z;
+      }
+
+    } else if (isBowZone) {
+      // FORECASTLE BOW DECK
+      localDeckY = 20.2;
+
+      // Bow Hull Tapering Railings: follows the aerodynamic bow curve
+      const bowProgress = Math.min(1.0, Math.max(0, (localPos.z - halfLength * 0.22) / (halfLength * 0.28)));
+      const maxBowWidth = Math.max(2.4, (halfBeam - 0.4) * (1 - bowProgress * 0.65));
+      if (Math.abs(localPos.x) > maxBowWidth && !this.isSwimming) {
+        localPos.x = Math.sign(localPos.x) * maxBowWidth;
+        const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+        playerPos.x = resolvedWorld.x;
+        playerPos.z = resolvedWorld.z;
+      }
+      // Bow Tip Railing
+      if (localPos.z > halfLength * 0.51) {
+        localPos.z = halfLength * 0.51;
+        const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+        playerPos.z = resolvedWorld.z;
+      }
+
+    } else if (isSternZone) {
+      // POOP DECK STERN
+      localDeckY = 22.2;
+
+      // Stern Railings (Taffrail)
+      const sternProgress = Math.min(1.0, Math.max(0, Math.abs(localPos.z + halfLength * 0.22) / (halfLength * 0.28)));
+      const maxSternWidth = Math.max(3.0, (halfBeam - 0.4) * (1 - sternProgress * 0.40));
+      if (Math.abs(localPos.x) > maxSternWidth && !this.isSwimming) {
+        localPos.x = Math.sign(localPos.x) * maxSternWidth;
+        const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+        playerPos.x = resolvedWorld.x;
+        playerPos.z = resolvedWorld.z;
+      }
+      // Stern Taffrail Railing
+      if (localPos.z < -halfLength * 0.51) {
+        localPos.z = -halfLength * 0.51;
+        const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+        playerPos.z = resolvedWorld.z;
+      }
+
+    } else {
+      // MAIN PROMENADE DECK
+      localDeckY = 18.5;
+
+      // Solid Deckhouse Wall Collision: promenade alleyways exist at |x| >= 6.8
+      if (localPos.y < 23.5 && Math.abs(localPos.z) < halfLength * 0.22) {
+        const bridgeWallHalfWidth = 6.8;
+        if (Math.abs(localPos.x) < bridgeWallHalfWidth) {
+          const pushSign = localPos.x >= 0 ? 1 : -1;
+          localPos.x = pushSign * (bridgeWallHalfWidth + 0.3);
+          const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+          playerPos.x = resolvedWorld.x;
+          playerPos.z = resolvedWorld.z;
+        }
+      }
+
+      // Promenade Hull Railings
+      const railingEdge = halfBeam - 0.3;
+      if (Math.abs(localPos.x) > railingEdge && this.playerVel.y < 2.0 && !this.isSwimming) {
+        const sign = localPos.x > 0 ? 1 : -1;
+        localPos.x = sign * railingEdge;
+        const resolvedWorld = targetGroup.localToWorld(localPos.clone());
+        playerPos.x = resolvedWorld.x;
+        playerPos.z = resolvedWorld.z;
+      }
     }
 
     // Calculate world position of this deck point
@@ -1333,15 +1520,16 @@ export class GameEngine {
     if (!this.shipData) return;
 
     if (this.playerStats.inLifeboat) {
-      this.callbacks.onPromptInteract('Press [E] to Disembark / Step out of Lifeboat');
+      this.callbacks.onPromptInteract('Riding Lifeboat: Steer with Joystick / WASD · Press [E] to Disembark');
       return;
     }
 
     // Check lifeboats
     for (const boat of this.shipData.lifeboats) {
       const pos = boat.group.getWorldPosition(new THREE.Vector3());
-      if (this.playerPos.distanceTo(pos) < 4.5) {
-        this.callbacks.onPromptInteract('Press [E] to Board / Lower Lifeboat');
+      if (this.playerPos.distanceTo(pos) < 5.0) {
+        const label = boat.id.includes('bow') ? 'Board & Ride Bow Lifeboat' : 'Board & Ride Lifeboat';
+        this.callbacks.onPromptInteract(`Press [E] or tap Interact to ${label}`);
         return;
       }
     }
@@ -1360,6 +1548,17 @@ export class GameEngine {
       }
     }
 
+    // Check doors
+    if (this.shipData.doors) {
+      for (const door of this.shipData.doors) {
+        const pos = door.group.getWorldPosition(new THREE.Vector3());
+        if (this.playerPos.distanceTo(pos) < 4.2) {
+          this.callbacks.onPromptInteract(door.prompt);
+          return;
+        }
+      }
+    }
+
     this.callbacks.onPromptInteract(null);
   }
 
@@ -1368,6 +1567,11 @@ export class GameEngine {
     if (!this.shipData) return;
 
     for (const boat of this.shipData.lifeboats) {
+      // If currently steered/ridden by player, skip background auto-drift
+      if (this.playerStats.inLifeboat && this.playerStats.currentLifeboatId === boat.id) {
+        continue;
+      }
+
       const boatWorldPos = boat.group.getWorldPosition(new THREE.Vector3());
       const waterY = Math.sin(boatWorldPos.x * 0.05 + time * 1.8) * 0.8;
 

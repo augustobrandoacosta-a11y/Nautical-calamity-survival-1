@@ -21,6 +21,16 @@ export interface InteractiveItem {
   worldPos: THREE.Vector3;
 }
 
+export interface InteractiveDoor {
+  id: string;
+  name: string;
+  targetDestination: 'bow' | 'stern' | 'rooftop' | 'promenade';
+  targetLocalPos: THREE.Vector3;
+  targetGroup: 'bow' | 'stern';
+  group: THREE.Group;
+  prompt: string;
+}
+
 export interface BuiltShipResult {
   rootGroup: THREE.Group;
   bowGroup: THREE.Group;
@@ -28,6 +38,7 @@ export interface BuiltShipResult {
   funnels: THREE.Mesh[];
   lifeboats: InteractiveLifeboat[];
   items: InteractiveItem[];
+  doors: InteractiveDoor[];
   lights: THREE.PointLight[];
   obstacleMesh: THREE.Group | null;
   deckSurfaces: THREE.Box3[]; // collision/walkable bounding boxes
@@ -502,6 +513,68 @@ export function buildShipMesh(ship: ShipDefinition): BuiltShipResult {
     });
   });
 
+  // Dedicated Bow Lifeboats on Forecastle Deck (Port & Starboard)
+  [-1, 1].forEach((bowSign) => {
+    const isPort = bowSign === -1;
+    const side = isPort ? 'port' : 'starboard';
+    const bowXPos = bowSign * (shipBeam * 0.35);
+    const bowYPos = hullHeight + 4.8;
+    const bowZPos = shipLength * 0.35;
+
+    const bowBoatGroup = new THREE.Group();
+    bowBoatGroup.position.set(bowXPos, bowYPos, bowZPos);
+    bowBoatGroup.name = `lifeboat_bow_${side}`;
+
+    // Boat hull (white wooden cutter)
+    const bHullGeo = new THREE.CylinderGeometry(boatBeam * 0.52, boatBeam * 0.36, boatLength * 0.95, 8, 1, false);
+    bHullGeo.rotateZ(Math.PI * 0.5);
+    bHullGeo.rotateY(Math.PI * 0.5);
+    const bHullMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45 });
+    const bHull = new THREE.Mesh(bHullGeo, bHullMat);
+    bHull.position.y = boatHeight * 0.4;
+    bowBoatGroup.add(bHull);
+
+    // Interior thwarts
+    const thwartGeo = new THREE.BoxGeometry(boatBeam * 0.78, 0.2, 0.75);
+    const thwartMat = new THREE.MeshStandardMaterial({ color: 0xb45309 });
+    for (let t = -2; t <= 2; t++) {
+      const thwart = new THREE.Mesh(thwartGeo, thwartMat);
+      thwart.position.set(0, boatHeight * 0.5, t * 1.3);
+      bowBoatGroup.add(thwart);
+    }
+
+    // Wooden Oars
+    const oarMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.6 });
+    [-0.8, 0.8].forEach((ox) => {
+      const oar = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 7.5, 6), oarMat);
+      oar.rotation.x = Math.PI * 0.48;
+      oar.position.set(ox, boatHeight * 0.6, 0);
+      bowBoatGroup.add(oar);
+    });
+
+    // Bow Davit Arms
+    const davitMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.7 });
+    [-boatLength * 0.38, boatLength * 0.38].forEach((davitZ) => {
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 3.5, 8), davitMat);
+      arm.position.set(-bowSign * 0.6, 1.0, davitZ);
+      bowBoatGroup.add(arm);
+    });
+
+    bowGroup.add(bowBoatGroup);
+
+    lifeboats.push({
+      id: `boat_bow_${side}`,
+      group: bowBoatGroup,
+      shipSide: isPort ? 'port' : 'starboard',
+      isDeployed: false,
+      isOccupied: false,
+      capacity: 10,
+      occupants: 0,
+      worldPos: new THREE.Vector3(bowXPos, bowYPos, bowZPos),
+      initialLocalPos: new THREE.Vector3(bowXPos, bowYPos, bowZPos),
+    });
+  });
+
   // Interactive Items (Lifejacket Lockers and Flare Gun Boxes)
   // Lifejacket Locker (Bright orange emergency chest)
   const lifejacketBoxGeo = new THREE.BoxGeometry(2.5, 1.8, 3.5);
@@ -634,6 +707,148 @@ export function buildShipMesh(ship: ShipDefinition): BuiltShipResult {
     rootGroup.add(obstacleMesh);
   }
 
+  // Build Interactive Compartment Doors (Bow, Stern, Rooftop & Promenade)
+  const doors: InteractiveDoor[] = [];
+
+  const createDoorMesh = (name: string, lampColor: number = 0xfef08a) => {
+    const doorGroup = new THREE.Group();
+    doorGroup.name = name;
+
+    // Door frame (rich dark timber / steel trim)
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x27272a, roughness: 0.6, metalness: 0.2 });
+    const frameGeo = new THREE.BoxGeometry(2.4, 4.4, 0.4);
+    const frameMesh = new THREE.Mesh(frameGeo, frameMat);
+    doorGroup.add(frameMesh);
+
+    // Door panel (polished teak / mahogany wood)
+    const panelMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.5 });
+    const panelGeo = new THREE.BoxGeometry(2.0, 4.0, 0.26);
+    const panelMesh = new THREE.Mesh(panelGeo, panelMat);
+    panelMesh.position.z = 0.05;
+    doorGroup.add(panelMesh);
+
+    // Polished brass knob & backplate
+    const knobMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.3, metalness: 0.8 });
+    const knobGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.25, 8);
+    knobGeo.rotateX(Math.PI * 0.5);
+    const knobMesh = new THREE.Mesh(knobGeo, knobMat);
+    knobMesh.position.set(0.65, 0, 0.22);
+    doorGroup.add(knobMesh);
+
+    // Brass nameplate over door
+    const plateGeo = new THREE.BoxGeometry(1.8, 0.4, 0.1);
+    const plateMesh = new THREE.Mesh(plateGeo, knobMat);
+    plateMesh.position.set(0, 1.85, 0.22);
+    doorGroup.add(plateMesh);
+
+    // Overhead nautical lantern
+    const lanternMat = new THREE.MeshStandardMaterial({
+      color: lampColor,
+      emissive: lampColor,
+      emissiveIntensity: 0.6,
+      roughness: 0.2,
+    });
+    const lanternGeo = new THREE.SphereGeometry(0.28, 8, 8);
+    const lanternMesh = new THREE.Mesh(lanternGeo, lanternMat);
+    lanternMesh.position.set(0, 2.4, 0.35);
+    doorGroup.add(lanternMesh);
+
+    const lanternLight = new THREE.PointLight(lampColor, 1.2, 10);
+    lanternLight.position.set(0, 2.4, 0.5);
+    doorGroup.add(lanternLight);
+    lights.push(lanternLight);
+
+    return doorGroup;
+  };
+
+  // 1. Door to Bow (Forecastle & Lookout)
+  const doorBowMesh = createDoorMesh('DoorToBow', 0x38bdf8);
+  doorBowMesh.position.set(0, hullHeight + 2.2, shipLength * 0.28);
+  bowGroup.add(doorBowMesh);
+  doors.push({
+    id: 'door_bow',
+    name: 'Door to the Bow',
+    targetDestination: 'bow',
+    targetLocalPos: new THREE.Vector3(0, hullHeight + 4.2, shipLength * 0.44),
+    targetGroup: 'bow',
+    group: doorBowMesh,
+    prompt: 'Press [E] or tap Interact to enter Door to the Bow',
+  });
+
+  // 1b. Door from Bow returning to Promenade
+  const doorBowReturnMesh = createDoorMesh('DoorFromBow', 0x38bdf8);
+  doorBowReturnMesh.position.set(0, hullHeight + 4.2, shipLength * 0.38);
+  doorBowReturnMesh.rotation.y = Math.PI;
+  bowGroup.add(doorBowReturnMesh);
+  doors.push({
+    id: 'door_bow_return',
+    name: 'Door to Promenade Deck',
+    targetDestination: 'promenade',
+    targetLocalPos: new THREE.Vector3(0, hullHeight + 2.5, shipLength * 0.18),
+    targetGroup: 'bow',
+    group: doorBowReturnMesh,
+    prompt: 'Press [E] or tap Interact to return to Promenade Deck',
+  });
+
+  // 2. Door to Stern (Poop Deck & Railing)
+  const doorSternMesh = createDoorMesh('DoorToStern', 0xf59e0b);
+  doorSternMesh.position.set(0, hullHeight + 2.2, -shipLength * 0.24);
+  doorSternMesh.rotation.y = Math.PI;
+  sternGroup.add(doorSternMesh);
+  doors.push({
+    id: 'door_stern',
+    name: 'Door to the Stern',
+    targetDestination: 'stern',
+    targetLocalPos: new THREE.Vector3(0, hullHeight + 5.5, -shipLength * 0.44),
+    targetGroup: 'stern',
+    group: doorSternMesh,
+    prompt: 'Press [E] or tap Interact to enter Door to the Stern',
+  });
+
+  // 2b. Door from Stern returning to Promenade
+  const doorSternReturnMesh = createDoorMesh('DoorFromStern', 0xf59e0b);
+  doorSternReturnMesh.position.set(0, hullHeight + 5.5, -shipLength * 0.36);
+  sternGroup.add(doorSternReturnMesh);
+  doors.push({
+    id: 'door_stern_return',
+    name: 'Door to Promenade Deck',
+    targetDestination: 'promenade',
+    targetLocalPos: new THREE.Vector3(0, hullHeight + 2.5, -shipLength * 0.14),
+    targetGroup: 'stern',
+    group: doorSternReturnMesh,
+    prompt: 'Press [E] or tap Interact to return to Promenade Deck',
+  });
+
+  // 3. Door to Rooftop (Observation Deck & Bridge Roof)
+  const doorRoofMesh = createDoorMesh('DoorToRooftop', 0x34d399);
+  doorRoofMesh.position.set(shipBeam * 0.32, hullHeight + 2.2, shipLength * 0.14);
+  doorRoofMesh.rotation.y = -Math.PI * 0.5;
+  bowGroup.add(doorRoofMesh);
+  doors.push({
+    id: 'door_rooftop',
+    name: 'Door to the Rooftop',
+    targetDestination: 'rooftop',
+    targetLocalPos: new THREE.Vector3(0, hullHeight + 11.2, shipLength * 0.22),
+    targetGroup: 'bow',
+    group: doorRoofMesh,
+    prompt: 'Press [E] or tap Interact to climb to the Rooftop',
+  });
+
+  // 3b. Door from Rooftop returning down to Promenade
+  const doorRoofReturnMesh = createDoorMesh('DoorFromRooftop', 0x34d399);
+  doorRoofReturnMesh.position.set(0, hullHeight + 11.2, shipLength * 0.16);
+  doorRoofReturnMesh.rotation.y = Math.PI;
+  bowGroup.add(doorRoofReturnMesh);
+  doors.push({
+    id: 'door_rooftop_return',
+    name: 'Door down to Promenade',
+    targetDestination: 'promenade',
+    targetLocalPos: new THREE.Vector3(0, hullHeight + 2.5, shipLength * 0.14),
+    targetGroup: 'bow',
+    group: doorRoofReturnMesh,
+    prompt: 'Press [E] or tap Interact to descend to Promenade Deck',
+  });
+
   // Populate walk surface bounding boxes for basic player ground collision
   deckSurfaces.push(
     new THREE.Box3(
@@ -649,6 +864,7 @@ export function buildShipMesh(ship: ShipDefinition): BuiltShipResult {
     funnels,
     lifeboats,
     items,
+    doors,
     lights,
     obstacleMesh,
     deckSurfaces,
